@@ -1,5 +1,6 @@
 import { getPlatformHiddenFeePrompt } from "./prompts.js";
 
+const OLLAMA_URL = "http://localhost:11434/v1/chat/completions";
 const JINA_BASE = "https://r.jina.ai/";
 
 class AnalysisError extends Error {
@@ -9,33 +10,35 @@ class AnalysisError extends Error {
   }
 }
 
-async function callGemini(prompt) {
-  const key = import.meta.env.VITE_GEMINI_KEY;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`;
-
+async function callOllama(prompt) {
   let res;
   try {
-    res = await fetch(url, {
+    res = await fetch(OLLAMA_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { responseMimeType: "application/json" },
+        model: "llama3.2",
+        messages: [{ role: "user", content: prompt }],
+        stream: false,
+        format: "json",
       }),
     });
   } catch (err) {
-    throw new AnalysisError(`Network error: ${err.message}`, "api");
+    throw new AnalysisError(
+      "Could not connect to Ollama. Make sure it is running (`ollama serve`).",
+      "api"
+    );
   }
 
   if (!res.ok) {
     const body = await res.text().catch(() => res.statusText);
-    throw new AnalysisError(`Gemini API error ${res.status}: ${body}`, "api");
+    throw new AnalysisError(`Ollama error ${res.status}: ${body}`, "api");
   }
 
   const data = await res.json();
-  const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  const raw = data?.choices?.[0]?.message?.content;
 
-  if (!raw) throw new AnalysisError("Gemini returned an empty response.", "empty");
+  if (!raw) throw new AnalysisError("Ollama returned an empty response.", "empty");
 
   try {
     const parsed = JSON.parse(raw);
@@ -44,7 +47,7 @@ async function callGemini(prompt) {
       : (parsed.findings ?? parsed.results ?? parsed.fees ?? Object.values(parsed)[0] ?? []);
   } catch {
     throw new AnalysisError(
-      "Analysis incomplete — the model returned an unexpected format. Try again.",
+      "Analysis incomplete — model returned unexpected format. Try again.",
       "parse"
     );
   }
@@ -87,7 +90,11 @@ const DEMO_FINDINGS = [
 ];
 
 export async function analyzeUrl(url) {
-  if (!import.meta.env.VITE_GEMINI_KEY) {
+  // Check Ollama is reachable
+  try {
+    await fetch("http://localhost:11434/api/tags", { signal: AbortSignal.timeout(2000) });
+  } catch {
+    // Fall back to demo if Ollama not running
     await new Promise((r) => setTimeout(r, 1500));
     return DEMO_FINDINGS;
   }
@@ -116,11 +123,13 @@ export async function analyzeUrl(url) {
     );
   }
 
-  const findings = await callGemini(getPlatformHiddenFeePrompt(url, pageContent));
+  const findings = await callOllama(getPlatformHiddenFeePrompt(url, pageContent));
 
-  return findings.map((item) => ({
-    ...item,
-    id: `url-${item.id ?? Math.random().toString(36).slice(2)}`,
-    isHidden: true,
-  }));
+  return findings
+    .filter((item) => item != null && typeof item === "object")
+    .map((item) => ({
+      ...item,
+      id: `url-${item.id ?? Math.random().toString(36).slice(2)}`,
+      isHidden: true,
+    }));
 }

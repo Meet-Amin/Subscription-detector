@@ -5,7 +5,7 @@ import LoadingScreen from './components/LoadingScreen';
 import { analyzeUrl } from './lib/analyzeUrl';
 import './App.css';
 
-const DEMO_MODE = !import.meta.env.VITE_GEMINI_KEY;
+const DEMO_MODE = false;
 
 export default function App() {
   const [stage, setStage] = useState('upload'); // 'upload' | 'loading' | 'results' | 'error'
